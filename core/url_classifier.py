@@ -56,18 +56,22 @@ class URLClassifier:
         # Analyze URL structure and fetch HTML for deep classification
         try:
             async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True, verify=False) as client:
-                resp = await client.get(text)
-                if resp.status_code != 200:
-                    return InputType.UNKNOWN_URL, {"url": text, "status_code": resp.status_code}
-
-                enc = resp.encoding if resp.encoding and resp.encoding != 'iso-8859-1' else 'utf-8'
+                html = ""
+                status_code = 0
                 try:
-                    html = resp.content.decode(enc, errors='replace')
+                    resp = await client.get(text)
+                    status_code = resp.status_code
+                    if resp.status_code == 200:
+                        enc = resp.encoding if resp.encoding and resp.encoding != 'iso-8859-1' else 'utf-8'
+                        try:
+                            html = resp.content.decode(enc, errors='replace')
+                        except Exception:
+                            html = resp.text
                 except Exception:
-                    html = resp.text
+                    pass
 
-                # If 403 or Cloudflare 5s challenge, fallback to BrowserFetcher
-                if resp.status_code == 403 or "Just a moment" in html or "请稍候" in html:
+                # If 403 / 503 or Cloudflare 5s challenge, fallback to BrowserFetcher
+                if status_code in (403, 503) or "Just a moment" in html or "请稍候" in html or not html:
                     try:
                         from core.browser_fetcher import BrowserFetcher
                         bf = BrowserFetcher()
@@ -76,6 +80,9 @@ class URLClassifier:
                             html = rendered
                     except Exception:
                         pass
+
+                if not html:
+                    return InputType.UNKNOWN_URL, {"url": text, "status_code": status_code}
 
                 soup = BeautifulSoup(html, "html.parser")
                 page_title = soup.title.get_text(strip=True) if soup.title else ""
@@ -94,6 +101,14 @@ class URLClassifier:
                 ]
 
                 # Classification Rules:
+                # 0. If URL ends with /<digits>.html (e.g. /54444583.html, /123.html) -> CHAPTER_PAGE
+                if re.search(r'/\d+(?:_\d+)?\.html$', text):
+                    return InputType.CHAPTER_PAGE, {
+                        "url": str(resp.url) if 'resp' in locals() and hasattr(resp, 'url') else text,
+                        "page_title": page_title,
+                        "html": html
+                    }
+
                 # 1. If page contains "章节目录", "开始阅读", "加入书架" -> Book Detail Page
                 if any(btn in "".join(nav_texts) for btn in ("章节目录", "查看目录", "全部章节", "开始阅读", "免费试读", "加入书架")):
                     return InputType.BOOK_DETAIL_PAGE, {

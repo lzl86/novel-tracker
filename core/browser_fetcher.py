@@ -1,7 +1,7 @@
 """
 Browser Fetcher and Anti-WAF Challenge Bridge.
-Launches system browser (Edge / Chrome) via Playwright or uses injected clearance cookies
-to bypass Cloudflare Turnstile, 5-second challenges, and JavaScript rendering barriers.
+Launches system browser (Edge / Chrome) via Playwright with stealth anti-automation flags
+and handles Cloudflare Turnstile 5-second challenges and cookie pass-through.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from typing import Optional, Dict
 
 
 class BrowserFetcher:
-    def __init__(self, headless: bool = True, timeout: int = 25000):
+    def __init__(self, headless: bool = True, timeout: int = 30000):
         self.headless = headless
         self.timeout = timeout
         self.config = self._load_config()
@@ -27,9 +27,9 @@ class BrowserFetcher:
                 pass
         return {}
 
-    async def fetch_html(self, url: str, wait_seconds: int = 6) -> Optional[str]:
+    async def fetch_html(self, url: str, wait_seconds: int = 8) -> Optional[str]:
         """
-        Fetches full rendered HTML by launching system browser context.
+        Fetches full rendered HTML by launching stealth system browser context.
         """
         try:
             from playwright.async_api import async_playwright
@@ -40,14 +40,19 @@ class BrowserFetcher:
         print(f"🛡️ [Anti-WAF] 正在启动浏览器内核穿透 Cloudflare 盾: {url[:45]}...")
 
         async with async_playwright() as p:
-            # Prefer system Edge, fallback to Chrome or default chromium
             browser = None
             for channel in ["msedge", "chrome", None]:
                 try:
+                    launch_args = [
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--disable-infobars",
+                        "--disable-extensions",
+                    ]
                     if channel:
-                        browser = await p.chromium.launch(channel=channel, headless=self.headless)
+                        browser = await p.chromium.launch(channel=channel, headless=self.headless, args=launch_args)
                     else:
-                        browser = await p.chromium.launch(headless=self.headless)
+                        browser = await p.chromium.launch(headless=self.headless, args=launch_args)
                     if browser:
                         break
                 except Exception:
@@ -64,13 +69,19 @@ class BrowserFetcher:
                         "AppleWebKit/537.36 (KHTML, like Gecko) "
                         "Chrome/124.0.0.0 Safari/537.36"
                     ),
-                    viewport={"width": 1280, "height": 800}
+                    viewport={"width": 1366, "height": 768},
+                    locale="zh-CN"
                 )
+
+                # Stealth JS injection to remove automation signatures
+                await context.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    window.chrome = { runtime: {} };
+                """)
 
                 # Inject cookies from config if present
                 cookie_str = self.config.get("cloudflare_cookie", "")
                 if cookie_str:
-                    # Parse cookies
                     cookies = []
                     for item in cookie_str.split(";"):
                         if "=" in item:
@@ -83,16 +94,16 @@ class BrowserFetcher:
                 page = await context.new_page()
                 await page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
 
-                # Wait for Cloudflare challenge redirect
+                # Wait and monitor challenge resolution
                 for _ in range(int(wait_seconds)):
                     title = await page.title()
                     if "Just a moment" not in title and "请稍候" not in title and "Cloudflare" not in title:
                         break
                     # Attempt clicking turnstile checkbox
                     for f in page.frames:
-                        if "cloudflare.com" in f.url:
+                        if "cloudflare.com" in f.url or "turnstile" in f.url:
                             try:
-                                box = await f.query_selector("input, label, span, .ctp-checkbox-label")
+                                box = await f.query_selector("input[type='checkbox'], label, span, .ctp-checkbox-label")
                                 if box:
                                     await box.click()
                             except Exception:

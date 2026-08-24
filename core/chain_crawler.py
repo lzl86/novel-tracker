@@ -76,14 +76,26 @@ class ChainedChapterCrawler:
 
                 try:
                     resp = await client.get(current_url)
-                    if resp.status_code != 200:
-                        break
+                    html = ""
+                    if resp.status_code == 200:
+                        enc = resp.encoding if resp.encoding and resp.encoding != 'iso-8859-1' else 'utf-8'
+                        try:
+                            html = resp.content.decode(enc, errors='replace')
+                        except Exception:
+                            html = resp.text
 
-                    enc = resp.encoding if resp.encoding and resp.encoding != 'iso-8859-1' else 'utf-8'
-                    try:
-                        html = resp.content.decode(enc, errors='replace')
-                    except Exception:
-                        html = resp.text
+                    if resp.status_code in (403, 503) or "Just a moment" in html or "请稍候" in html or not html:
+                        try:
+                            from core.browser_fetcher import BrowserFetcher
+                            bf = BrowserFetcher()
+                            rendered = await bf.fetch_html(current_url)
+                            if rendered:
+                                html = rendered
+                        except Exception:
+                            pass
+
+                    if not html:
+                        break
 
                     soup = BeautifulSoup(html, "html.parser")
 
