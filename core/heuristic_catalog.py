@@ -87,35 +87,42 @@ class HeuristicCatalogExtractor:
         return None
 
     @staticmethod
-    def is_valid_catalog(chapters: List[Tuple[float, str, str]]) -> bool:
+    def is_valid_catalog(chapters: List[Tuple[float, str, str]], expected_book_name: str = "") -> bool:
         """
         Validates if extracted chapter list belongs to a genuine single novel catalog,
         and not a random multi-book search/tag aggregation snippet.
         """
-        if not chapters:
+        if not chapters or len(chapters) < 3:
             return False
 
-        # If we have >= 15 chapters, it's very likely a genuine catalog
-        if len(chapters) >= 15:
-            return True
-
-        # If < 15 chapters, check numerical continuity
         nums = [num for num, title, url in chapters if num > 0]
         if not nums:
-            # If all are unnumbered, require at least 5 chapters
             return len(chapters) >= 5
 
-        # Check if numbers start from 1..N (e.g. chapters 1, 2, 3...)
-        if min(nums) <= 3 and (max(nums) - min(nums)) <= len(nums) * 3:
-            return True
+        # Check if the catalog is inverted (e.g. 16, 15, 14 ... 1)
+        is_strictly_descending = all(nums[i] > nums[i+1] for i in range(len(nums)-1))
+        if is_strictly_descending and len(nums) >= 3:
+            # Reverse for continuity analysis
+            nums = list(reversed(nums))
 
-        # If chapters have massive jump gaps (e.g. 111, 343, 912, 1053), this is an aggregator page
-        if len(nums) >= 3:
-            jumps = [nums[i+1] - nums[i] for i in range(len(nums)-1)]
-            avg_jump = sum(jumps) / len(jumps)
-            if avg_jump > 30:
-                # Discontinuous aggregator page -> Invalid catalog
+        # Continuity & step analysis
+        step_diffs = [nums[i+1] - nums[i] for i in range(len(nums)-1)]
+        
+        # In a genuine catalog, consecutive steps should be positive (mostly 1..3)
+        negative_steps = sum(1 for d in step_diffs if d <= 0)
+        abnormal_jumps = sum(1 for d in step_diffs if d > 10)
+
+        total_steps = len(step_diffs)
+        if total_steps > 0:
+            # If > 20% steps are negative or erratic jumps, this is a dirty multi-book aggregator
+            if (negative_steps + abnormal_jumps) / total_steps > 0.25:
                 return False
+
+        # Check min/max span vs length
+        span = max(nums) - min(nums)
+        if len(nums) < 25 and span > len(nums) * 5:
+            # e.g., 17 chapters but span from 1 to 950 with huge gaps -> aggregator page
+            return False
 
         return True
 
