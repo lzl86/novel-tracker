@@ -21,6 +21,12 @@ class TestEnhancements(unittest.TestCase):
         self.assertEqual(server.port, 8765)
         self.assertEqual(server.host, "127.0.0.1")
 
+    def test_web_app_init(self):
+        from core.web_server import WebApp
+        app = WebApp(port=5000, output_dir="test_downloads")
+        self.assertEqual(app.port, 5000)
+        self.assertEqual(app.host, "127.0.0.1")
+
 
 if __name__ == "__main__":
     unittest.main()

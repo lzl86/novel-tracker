@@ -85,34 +85,37 @@ pip install -e .
 ## 💻 命令行使用手册 (CLI)
 
 ```bash
-# 1. 全网即时查最新章节
+# 1. 启动可视化 Web 图形控制台（浏览器操作界面）
+python cli.py web --port 5000
+
+# 2. 全网即时查最新章节
 python cli.py search "宿命之环"
 
-# 2. 通用提取器：输入书名或任意网址，一键导出 EPUB 电子书与 TXT
+# 3. 通用提取器：输入书名或任意网址，一键导出 EPUB 电子书与 TXT
 python cli.py extract "宿命之环" -f epub,txt -o "downloads"
 
-# 3. 提取任意小说详情页/目录页，导出全格式 (TXT + EPUB + JSON)
+# 4. 提取任意小说详情页/目录页，导出全格式 (TXT + EPUB + JSON)
 python cli.py extract "https://m.51read.org/xiaoshuo/406687/" -f all
 
-# 4. 指定下载章节范围（例如只下载前 50 章尝鲜）
+# 5. 指定下载章节范围（例如只下载前 50 章尝鲜）
 python cli.py extract "没钱修什么仙" --start 1 --limit 50 -f epub
 
-# 5. 添加小说至追更书架
+# 6. 添加小说至追更书架
 python cli.py follow "宿命之环"
 
-# 6. 查看追更书架与已知章节
+# 7. 查看追更书架与已知章节
 python cli.py list
 
-# 7. 一键检查书架全量更新状态
+# 8. 一键检查书架全量更新状态
 python cli.py check
 
-# 8. 开启后台持续追更监控（默认每 15 分钟检查并推送提醒）
+# 9. 开启后台持续追更监控（默认每 15 分钟检查并推送提醒）
 python cli.py monitor -i 15
 
-# 9. 启动浏览器接力服务（配合油猴脚本一键同步任何受盾保护小说）
+# 10. 启动浏览器接力服务（配合油猴脚本一键同步任何受盾保护小说）
 python cli.py relay --port 8765
 
-# 10. 增量修复与残缺章节单章就地回填
+# 11. 增量修复与残缺章节单章就地回填
 python scripts/gap_filler.py "downloads/《没钱修什么仙》.txt"
 ```
 

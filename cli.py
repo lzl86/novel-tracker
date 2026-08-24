@@ -260,6 +260,11 @@ def main():
     p_relay.add_argument("--port", type=int, default=8765, help="监听端口，默认 8765")
     p_relay.add_argument("-o", "--output", type=str, default="downloads", help="输出文件夹，默认 downloads")
 
+    # web (Web Dashboard GUI)
+    p_web = subparsers.add_parser("web", help="启动可视化 Web 控制台界面（一键提取、书架管理与文件下载）")
+    p_web.add_argument("--port", type=int, default=5000, help="Web 监听端口，默认 5000")
+    p_web.add_argument("--no-open", action="store_true", help="不自动打开默认浏览器")
+
     # monitor
     p_monitor = subparsers.add_parser("monitor", help="启动持续监控模式")
     p_monitor.add_argument("-i", "--interval", type=int, default=15, help="检查间隔（分钟），默认 15 分钟")
@@ -289,6 +294,10 @@ def main():
         from core.relay_server import RelayServer
         server = RelayServer(port=args.port, output_dir=args.output)
         server.start()
+    elif args.command == "web":
+        from core.web_server import WebApp
+        app = WebApp(port=args.port)
+        app.start(auto_open=not args.no_open)
     elif args.command == "monitor":
         asyncio.run(cmd_monitor(args.interval))
 
