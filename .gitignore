@@ -1,0 +1,29 @@
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Data and Downloads (Prevent uploading large book files)
+downloads/
+*.txt
+*.epub
+*.mobi
+
+# User Configurations & State
+config.json
+watchlist.json
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

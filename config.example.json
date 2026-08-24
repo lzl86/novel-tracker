@@ -1,0 +1,6 @@
+{
+  "pushplus_token": "YOUR_PUSHPLUS_TOKEN",
+  "serverchan_sendkey": "YOUR_SERVERCHAN_SENDKEY",
+  "custom_webhook_url": "",
+  "enable_desktop_notification": true
+}

@@ -1,0 +1,263 @@
+"""
+Command Line Interface for Novel Latest Chapter Aggregator and Tracker.
+"""
+
+import argparse
+import asyncio
+import os
+import sys
+import time
+from datetime import datetime
+
+# Set up utf-8 encoding for stdout on Windows
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
+from sources import SourceManager
+from core.tracker import NovelTracker
+from core.notifier import Notifier
+from core.downloader import NovelDownloader
+
+
+def print_banner():
+    banner = """
+╔═════════════════════════════════════════════════════════════════╗
+║            📚 全网小说最新章节聚合与追更监控系统                 ║
+║                Novel Latest Chapter Tracker                     ║
+╚═════════════════════════════════════════════════════════════════╝
+    """
+    print(banner)
+
+
+async def cmd_search(novel_name: str):
+    """Search for a novel across all sources and display results."""
+    print(f"\n🔍 正在全网并发检索小说：《{novel_name}》...")
+    start_time = time.time()
+    
+    manager = SourceManager()
+    best_result, all_results = await manager.search_novel(novel_name)
+    elapsed = time.time() - start_time
+    
+    if not all_results:
+        print(f"\n❌ 未能找到《{novel_name}》的最新章节信息，请检查书名是否输入正确。")
+        return
+
+    print(f"✅ 检索完成 (耗时 {elapsed:.2f} 秒，共获取 {len(all_results)} 条来源数据)\n")
+    
+    print("┌" + "─" * 68 + "┐")
+    print(f"│ 🏆 【全网最新章节推荐】")
+    print(f"│ 📖 小说名称: 《{best_result.book_name}》 (作者: {best_result.author})")
+    print(f"│ 🆕 最新章节: {best_result.latest_chapter_title}")
+    print(f"│ 🌐 数据来源: {best_result.source_name}")
+    print(f"│ ⏱️ 更新时间: {best_result.update_time}")
+    if best_result.latest_chapter_url:
+        print(f"│ 🔗 快速链接: {best_result.latest_chapter_url}")
+    print("└" + "─" * 68 + "┘\n")
+
+    if len(all_results) > 1:
+        print("📑 各源站最新抓取详情对比：")
+        print(f"{'序号':<4} {'数据源':<14} {'最新章节':<32} {'更新时间':<12}")
+        print("-" * 68)
+        for idx, res in enumerate(all_results, 1):
+            title_display = res.latest_chapter_title
+            if len(title_display) > 28:
+                title_display = title_display[:27] + "…"
+            print(f"[{idx:<2}] {res.source_name:<14} {title_display:<32} {res.update_time:<12}")
+        print("-" * 68 + "\n")
+
+
+async def cmd_follow(novel_name: str):
+    """Search for novel and add it to watchlist."""
+    print(f"\n➕ 正在检索并关注小说：《{novel_name}》...")
+    manager = SourceManager()
+    best, all_res = await manager.search_novel(novel_name)
+    
+    tracker = NovelTracker()
+    if best:
+        tracker.add_book(
+            book_name=novel_name,
+            author=best.author,
+            latest_chapter=best.latest_chapter_title,
+            latest_chapter_num=best.latest_chapter_num,
+            latest_chapter_url=best.latest_chapter_url,
+            source_name=best.source_name
+        )
+        print(f"🎉 关注成功！已将《{novel_name}》加入追更书架。")
+        print(f"   当前记录章节: {best.latest_chapter_title} (来源: {best.source_name})")
+    else:
+        tracker.add_book(book_name=novel_name)
+        print(f"⚠️ 暂未搜索到即时章节，已将《{novel_name}》加入书架，后续将自动监控。")
+
+
+def cmd_unfollow(novel_name: str):
+    """Remove novel from watchlist."""
+    tracker = NovelTracker()
+    if tracker.remove_book(novel_name):
+        print(f"\n🗑️ 已将《{novel_name}》从追更书架移除。")
+    else:
+        print(f"\n❌ 书架中未找到《{novel_name}》。")
+
+
+def cmd_list():
+    """List all followed novels."""
+    tracker = NovelTracker()
+    books = tracker.get_all()
+    
+    print("\n📚 【追更书架列表】")
+    if not books:
+        print("  (书架空空如也，可以使用 `python cli.py follow <书名>` 添加小说)\n")
+        return
+
+    print("=" * 72)
+    print(f"{'书名':<16} {'作者':<10} {'已知最新章节':<30} {'上次检查':<14}")
+    print("-" * 72)
+    for b in books:
+        bname = f"《{b.get('book_name', '')}》"
+        author = b.get('author', '未知')
+        chapter = b.get('last_known_chapter', '暂无')
+        if len(chapter) > 26:
+            chapter = chapter[:25] + "…"
+        checked = b.get('last_checked_at', '')
+        if checked:
+            checked = checked.split(" ")[-1]
+        print(f"{bname:<16} {author:<10} {chapter:<30} {checked:<14}")
+    print("=" * 72 + "\n")
+
+
+async def cmd_check():
+    """Check updates for all followed books."""
+    tracker = NovelTracker()
+    notifier = Notifier()
+    books = tracker.get_all()
+    
+    if not books:
+        print("\n书架中暂无追更小说，请先使用 `python cli.py follow <书名>` 添加。\n")
+        return
+
+    print(f"\n⚡ 开始检查书架更新 (共 {len(books)} 本小说)...")
+    manager = SourceManager()
+    
+    update_count = 0
+    for b in books:
+        name = b["book_name"]
+        print(f"🔎 正在检查: 《{name}》...")
+        best, _ = await manager.search_novel(name)
+        if best:
+            is_new, old_title = tracker.check_and_update(
+                book_name=name,
+                new_chapter_title=best.latest_chapter_title,
+                new_chapter_num=best.latest_chapter_num,
+                new_chapter_url=best.latest_chapter_url,
+                source_name=best.source_name
+            )
+            if is_new:
+                update_count += 1
+                notifier.notify_update(
+                    book_name=name,
+                    new_chapter=best.latest_chapter_title,
+                    old_chapter=old_title,
+                    chapter_url=best.latest_chapter_url,
+                    source_name=best.source_name
+                )
+            else:
+                print(f"  ✓ 《{name}》暂无更新 (当前: {best.latest_chapter_title})")
+        else:
+            print(f"  ⚠️ 《{name}》本次未检索到新数据")
+
+    print(f"\n🏁 检查完成！共发现 {update_count} 本小说有更新。\n")
+
+
+async def cmd_download(novel_name: str, url: Optional[str], start: int, limit: Optional[int], output: str, concurrency: int):
+    """Download novel chapters."""
+    downloader = NovelDownloader(output_dir=output, concurrency=concurrency)
+    await downloader.download_novel(
+        novel_name=novel_name,
+        catalog_url=url,
+        start_chapter=start,
+        limit_chapters=limit
+    )
+
+
+async def cmd_monitor(interval_minutes: int):
+    """Run continuous monitoring loop."""
+    print(f"\n🔄 进入自动后台监控模式，每 {interval_minutes} 分钟检查一次更新...")
+    print("按 Ctrl+C 可随时退出监控。\n")
+    
+    while True:
+        try:
+            print(f"\n⏰ [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 触发定时更新检测...")
+            await cmd_check()
+            print(f"💤 休眠等待下次检查 ({interval_minutes} 分钟后)...")
+            await asyncio.sleep(interval_minutes * 60)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print("\n👋 已退出监控模式。")
+            break
+        except Exception as e:
+            print(f"⚠️ 监控循环异常: {e}，将在 1 分钟后重试...")
+            await asyncio.sleep(60)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="全网小说最新章节聚合与追更监控工具",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest="command", help="支持的子命令")
+
+    # search
+    p_search = subparsers.add_parser("search", help="全网即时检索小说最新章节")
+    p_search.add_argument("name", type=str, help="小说名称")
+
+    # follow
+    p_follow = subparsers.add_parser("follow", help="将小说添加到追更书架")
+    p_follow.add_argument("name", type=str, help="小说名称")
+
+    # unfollow
+    p_unfollow = subparsers.add_parser("unfollow", help="从追更书架移除小说")
+    p_unfollow.add_argument("name", type=str, help="小说名称")
+
+    # list
+    subparsers.add_parser("list", help="查看追更书架中的所有小说")
+
+    # check
+    subparsers.add_parser("check", help="立即检查书架所有小说的更新状态")
+
+    # download
+    p_download = subparsers.add_parser("download", help="下载小说章节到本地 TXT 文件")
+    p_download.add_argument("name", type=str, help="小说名称")
+    p_download.add_argument("-u", "--url", type=str, default=None, help="指定的目录/书籍页面 URL（可选）")
+    p_download.add_argument("--start", type=int, default=1, help="起始章节序号，默认 1")
+    p_download.add_argument("--limit", type=int, default=None, help="最多下载章节数（可选）")
+    p_download.add_argument("-o", "--output", type=str, default="downloads", help="输出文件夹，默认 downloads")
+    p_download.add_argument("-c", "--concurrency", type=int, default=8, help="并发下载数，默认 8")
+
+    # monitor
+    p_monitor = subparsers.add_parser("monitor", help="启动持续监控模式")
+    p_monitor.add_argument("-i", "--interval", type=int, default=15, help="检查间隔（分钟），默认 15 分钟")
+
+    args = parser.parse_args()
+
+    if not args.command:
+        print_banner()
+        parser.print_help()
+        return
+
+    if args.command == "search":
+        asyncio.run(cmd_search(args.name))
+    elif args.command == "follow":
+        asyncio.run(cmd_follow(args.name))
+    elif args.command == "unfollow":
+        cmd_unfollow(args.name)
+    elif args.command == "list":
+        cmd_list()
+    elif args.command == "check":
+        asyncio.run(cmd_check())
+    elif args.command == "download":
+        asyncio.run(cmd_download(args.name, args.url, args.start, args.limit, args.output, args.concurrency))
+    elif args.command == "monitor":
+        asyncio.run(cmd_monitor(args.interval))
+
+
+if __name__ == "__main__":
+    main()
