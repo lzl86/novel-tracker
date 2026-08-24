@@ -255,6 +255,11 @@ def main():
     p_extract.add_argument("-o", "--output", type=str, default="downloads", help="输出文件夹，默认 downloads")
     p_extract.add_argument("-c", "--concurrency", type=int, default=12, help="并发下载数，默认 12")
 
+    # relay (Browser Relay Server)
+    p_relay = subparsers.add_parser("relay", help="启动本地浏览器接力服务，配合油猴脚本一键同步任何受盾保护小说")
+    p_relay.add_argument("--port", type=int, default=8765, help="监听端口，默认 8765")
+    p_relay.add_argument("-o", "--output", type=str, default="downloads", help="输出文件夹，默认 downloads")
+
     # monitor
     p_monitor = subparsers.add_parser("monitor", help="启动持续监控模式")
     p_monitor.add_argument("-i", "--interval", type=int, default=15, help="检查间隔（分钟），默认 15 分钟")
@@ -280,6 +285,10 @@ def main():
         asyncio.run(cmd_download(args.name, args.url, args.start, args.limit, args.output, args.concurrency))
     elif args.command == "extract":
         asyncio.run(cmd_extract(args.target, args.format, args.start, args.limit, args.output, args.concurrency))
+    elif args.command == "relay":
+        from core.relay_server import RelayServer
+        server = RelayServer(port=args.port, output_dir=args.output)
+        server.start()
     elif args.command == "monitor":
         asyncio.run(cmd_monitor(args.interval))
 

@@ -11,9 +11,11 @@
 
 ## 🌟 核心特性与架构亮点
 
-1. 🔍 **无固定源全网智能聚合**：
-   - 内置多引擎并发检索（百度、搜狗、必应、DuckDuckGo 及各大开放镜像站），仅需输入书名即可自动全网聚合最新章节与目录。
-2. ⚡ **主索引探针 + 降级回源（Fallback Routing）**：
+1. 🔍 **无固定源全网智能聚合与站内私有直连池（DirectSiteSearchHub）**：
+   - 解决“**搜不到**”问题：并发直连各大高质量小说 CMS 站内搜索端点（51read, bige3, xbiquwx, 89wx, piaotian, shuhaige 等），绕过公网搜索引擎 `noindex` 与反爬限制。
+2. 🛡️ **浏览器接力与抗盾助手（Relay Assistant & Tampermonkey）**：
+   - 解决“**不让看**”问题：配套本地 `python cli.py relay` 接力服务与油猴脚本（`novel_relay.user.js`），在真实浏览器浏览受 Cloudflare 强人机盾、VIP 保护的页面时，一键秒级同步抓取正文。
+3. ⚡ **主索引探针 + 降级回源（Fallback Routing）**：
    - 主节点仅承担低频元数据监控（`MasterProbe`），降低反爬风险；
    - 遭遇 VIP 付费预览截断或访问限制时，自动触发 **`DataIncompleteError` 熔断机制**，自动转入多源并发回源探针。
 3. 🛡️ **真目录连续性与防噪校验（Anti-Noise Catalog Validation）**：
@@ -107,7 +109,10 @@ python cli.py check
 # 8. 开启后台持续追更监控（默认每 15 分钟检查并推送提醒）
 python cli.py monitor -i 15
 
-# 9. 增量修复与残缺章节单章就地回填
+# 9. 启动浏览器接力服务（配合油猴脚本一键同步任何受盾保护小说）
+python cli.py relay --port 8765
+
+# 10. 增量修复与残缺章节单章就地回填
 python scripts/gap_filler.py "downloads/《没钱修什么仙》.txt"
 ```
 

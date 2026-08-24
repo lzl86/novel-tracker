@@ -51,9 +51,19 @@ class UniversalNovelExtractor:
 
     async def find_authentic_catalog_candidates(self, book_name: str) -> List[str]:
         """
-        Searches across multiple search engines for candidate novel catalog URLs.
+        Searches across DirectSiteSearchHub (站内直连检索池) and multi-engine SERP.
         """
         candidates: List[str] = []
+
+        # 1. First priority: Direct novel site search endpoints (Bypasses SEO noindex & search blocks)
+        try:
+            from core.direct_site_search import DirectSiteSearchHub
+            hub = DirectSiteSearchHub()
+            direct_hits = await hub.search_all_direct_sites(book_name)
+            candidates.extend(direct_hits)
+        except Exception:
+            pass
+
         queries = [
             f"{book_name} 章节目录",
             f"{book_name} 小说 目录",
