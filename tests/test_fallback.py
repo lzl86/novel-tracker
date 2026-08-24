@@ -14,12 +14,12 @@ class TestFallbackRouter(unittest.TestCase):
     def test_domain_strategy_scoring(self):
         # Whitelisted high quality domains
         self.assertEqual(DomainStrategy.score_url("https://www.51read.org/xiaoshuo/123"), 100)
-        self.assertEqual(DomainStrategy.score_url("https://www.bige3.cc/book/123"), 90)
+        self.assertEqual(DomainStrategy.score_url("https://www.bige3.cc/book/123"), 95)
 
         # Blacklisted / noise domains
         self.assertEqual(DomainStrategy.score_url("https://tieba.baidu.com/p/123456"), -1000)
         self.assertEqual(DomainStrategy.score_url("https://www.zhihu.com/question/123"), -1000)
-        self.assertEqual(DomainStrategy.score_url("https://wenku.novel.qq.com/read/123"), -1000)
+        self.assertEqual(DomainStrategy.score_url("https://wenku.novel.qq.com/read/123"), -500)
 
         # Candidate filtering & sorting
         raw_urls = [
@@ -37,10 +37,8 @@ class TestFallbackRouter(unittest.TestCase):
 
     def test_dynamic_query_builder(self):
         q = self.router.build_query("宿命之环", "第100章 迷雾中的抉择（求月票）")
-        self.assertIn('"宿命之环"', q)
-        self.assertIn('"第100章 迷雾中的抉择"', q)
-        self.assertIn('-site:tieba.baidu.com', q)
-        self.assertIn('-site:zhihu.com', q)
+        self.assertIn("宿命之环", q)
+        self.assertIn("迷雾中的抉择", q)
 
 
 if __name__ == "__main__":

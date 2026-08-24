@@ -7,18 +7,18 @@ FallbackRouter, and Multi-Format Formatters into a unified extraction pipeline.
 import asyncio
 import os
 import time
+import urllib.parse
 from typing import List, Optional, Tuple, Dict
 import httpx
+from bs4 import BeautifulSoup
 
 from core.url_classifier import URLClassifier, InputType
 from core.heuristic_catalog import HeuristicCatalogExtractor
 from core.chain_crawler import ChainedChapterCrawler
 from core.heuristic_extractor import HeuristicExtractor
 from core.pipeline import RegexCleaningPipeline
-from core.fallback_router import FallbackRouter
-from core.exceptions import DataIncompleteError, SourceExhaustedError
+from core.fallback_router import FallbackRouter, DomainStrategy
 from core.formatters import TxtFormatter, JsonFormatter, EpubFormatter
-from sources import SourceManager
 
 
 class UniversalNovelExtractor:
@@ -48,6 +48,65 @@ class UniversalNovelExtractor:
             'Accept-Language': 'zh-CN,zh;q=0.9',
         }
         os.makedirs(self.output_dir, exist_ok=True)
+
+    async def find_authentic_catalog_candidates(self, book_name: str) -> List[str]:
+        """
+        Searches across multiple search engines for candidate novel catalog URLs.
+        """
+        candidates: List[str] = []
+        queries = [
+            f"{book_name} 章节目录",
+            f"{book_name} 小说 目录",
+            f"\"{book_name}\" 最新章节列表",
+            f"{book_name} 51read",
+            f"{book_name} 笔趣阁 目录"
+        ]
+
+        async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True, verify=False) as client:
+            for q in queries:
+                encoded_q = urllib.parse.quote(q)
+                # Engine 1: Baidu
+                try:
+                    r = await client.get(f"https://www.baidu.com/s?wd={encoded_q}&rn=10")
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        for a in soup.select(".result h3 a, .c-container h3 a"):
+                            href = a.get("href")
+                            if href and href.startswith("http"):
+                                candidates.append(href)
+                except Exception:
+                    pass
+
+                # Engine 2: Sogou
+                try:
+                    r = await client.get(f"https://www.sogou.com/web?query={encoded_q}")
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        for a in soup.select(".results a"):
+                            href = a.get("href")
+                            if href and href.startswith("/"):
+                                href = f"https://www.sogou.com{href}"
+                            if href and "sogou.com/link" in href:
+                                candidates.append(href)
+                except Exception:
+                    pass
+
+                # Engine 3: Bing
+                try:
+                    r = await client.get(f"https://cn.bing.com/search?q={encoded_q}")
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.content.decode("utf-8", errors="ignore"), "html.parser")
+                        for a in soup.select("#b_results li.b_algo h2 a"):
+                            href = a.get("href")
+                            if href and href.startswith("http"):
+                                candidates.append(href)
+                except Exception:
+                    pass
+
+                if len(candidates) >= 15:
+                    break
+
+        return DomainStrategy.filter_and_sort_candidates(candidates)
 
     async def _fetch_single_chapter(
         self,
@@ -122,31 +181,35 @@ class UniversalNovelExtractor:
         book_meta = {"title": "未知小说", "author": "未知"}
         chapters_data: List[Tuple[int, str, str]] = []
         source_url = input_target if input_type != InputType.BOOK_NAME else ""
+        chap_list = []
 
-        # Case 1: Pure Book Name -> Multi-source Search first
+        # Case 1: Pure Book Name -> Multi-engine Candidate Catalog Probing
         if input_type == InputType.BOOK_NAME:
             book_name = meta_info.get("book_name", input_target)
-            print(f"🔎 [Search] 正在全网检索《{book_name}》目录入口...")
-            source_mgr = SourceManager()
-            best, all_res = await source_mgr.search_novel(book_name)
-            if best and best.book_url:
-                print(f"✅ 锁定优选数据源: {best.source_name} -> {best.book_url}")
-                book_meta, chap_list = await self.catalog_extractor.discover_catalog(best.book_url)
-                if not book_meta.get("title") or book_meta["title"] == "未知小说":
-                    book_meta["title"] = book_name
-                source_url = best.book_url
-            else:
-                # Fallback to direct catalog search
-                from core.downloader import NovelDownloader
-                dl = NovelDownloader()
-                found_url = await dl.find_catalog_url(book_name)
-                if found_url:
-                    book_meta, chap_list = await self.catalog_extractor.discover_catalog(found_url)
-                    book_meta["title"] = book_name
-                    source_url = found_url
-                else:
-                    print(f"❌ 未能检索到《{book_name}》的可用目录。")
-                    return {}
+            print(f"🔎 [Search] 正在全网检索《{book_name}》的可用目录...")
+            candidates = await self.find_authentic_catalog_candidates(book_name)
+            print(f"📋 发现 {len(candidates)} 个潜在书源候选，正在逐一进行真目录校验...")
+
+            matched_catalog = False
+            for idx, cand_url in enumerate(candidates[:10], 1):
+                try:
+                    meta_cand, chaps_cand = await self.catalog_extractor.discover_catalog(cand_url)
+                    if chaps_cand and len(chaps_cand) >= 5:
+                        print(f"  ✅ [有效目录锁定] 候选 #{idx} ({cand_url[:35]}...) 成功识别 {len(chaps_cand)} 章")
+                        book_meta = meta_cand
+                        if not book_meta.get("title") or book_meta["title"] == "未知小说":
+                            book_meta["title"] = book_name
+                        chap_list = chaps_cand
+                        source_url = cand_url
+                        matched_catalog = True
+                        break
+                except Exception:
+                    continue
+
+            if not matched_catalog:
+                print(f"\n❌ 未能在开放网络中匹配到《{book_name}》的有效全本目录。")
+                print("💡 建议：请检查书名拼写是否正确，或直接复制该小说在任意网站的目录页/详情页 URL 传入提取！")
+                return {}
 
         # Case 2: Catalog Page or Book Detail Page -> Heuristic Catalog Extraction
         elif input_type in (InputType.CATALOG_PAGE, InputType.BOOK_DETAIL_PAGE):
@@ -155,6 +218,9 @@ class UniversalNovelExtractor:
                 input_target,
                 html_preset=meta_info.get("html")
             )
+            if not chap_list:
+                print(f"\n❌ 该页面未能识别为有效的小说章节目录，可能是搜索聚合页或非小说网页。")
+                return {}
 
         # Case 3: Single Chapter Page -> Chained Crawler
         elif input_type == InputType.CHAPTER_PAGE:
@@ -171,14 +237,14 @@ class UniversalNovelExtractor:
             return {}
 
         # If we got chapter list from catalog, download concurrently
-        if 'chap_list' in locals() and chap_list:
+        if chap_list:
             if start_chapter > 1:
                 chap_list = [c for c in chap_list if c[0] >= start_chapter]
             if limit_chapters:
                 chap_list = chap_list[:limit_chapters]
 
             total = len(chap_list)
-            print(f"📚 共探测到 {total} 个有效章节，准备并发抓取完整正文...")
+            print(f"📚 共锁定 {total} 个正文章节，准备并发采集完整正文...")
 
             semaphore = asyncio.Semaphore(self.concurrency)
             async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True, verify=False) as client:

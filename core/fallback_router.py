@@ -1,13 +1,14 @@
 """
-Multi-source Fallback Router.
-Handles dynamic search query building, lightweight SERP querying, domain scoring/routing,
-and heuristic content retrieval when the primary source fails or returns incomplete data.
+Fallback Routing and Heuristic Content Extraction Engine.
+Dispatches queries across multi-engine SERP adapters (Baidu, Sogou, Bing, DuckDuckGo)
+with domain scoring to guarantee high-reliability full chapter extraction.
 """
 
 import asyncio
+import os
 import re
 import urllib.parse
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 import httpx
 from bs4 import BeautifulSoup
 
@@ -16,83 +17,74 @@ from core.heuristic_extractor import HeuristicExtractor
 from core.pipeline import RegexCleaningPipeline
 
 
-# Domain Routing Strategy Table
-DOMAIN_PRIORITY = {
-    # High quality, full-text novel mirrors (+100 to +50)
-    "51read.org": 100,
-    "bige3.cc": 90,
-    "bqg123.net": 85,
-    "xbiquwx.la": 80,
-    "bqg.biz": 80,
-    "69shuba.cx": 75,
-    "69shu.me": 75,
-    "shuhaige.net": 70,
-    "ttkan.co": 65,
-    "piaotia.com": 60,
-    "89wx.cc": 60,
-    "ddxs.com": 50,
-}
-
-DOMAIN_BLACKLIST = {
-    # Forum, social media, video and preview-only paywalled domains
-    "tieba.baidu.com",
-    "zhihu.com",
-    "bilibili.com",
-    "weibo.com",
-    "douban.com",
-    "xiaohongshu.com",
-    "qidian.com",
-    "readnovel.com",
-    "hongxiu.com",
-    "yunqi.qq.com",
-    "chuangshi.qq.com",
-    "wenku.novel.qq.com",
-    "fanqienovel.com",
-    "faloo.com",
-    "zongheng.com",
-}
-
-
 class DomainStrategy:
-    @staticmethod
-    def score_url(url: str) -> int:
-        """Returns priority score for a URL. Negative score indicates blacklisted domain."""
-        try:
-            parsed = urllib.parse.urlparse(url)
-            netloc = parsed.netloc.lower().split(':')[0]
-            
-            # Check blacklist
-            for bl in DOMAIN_BLACKLIST:
-                if bl in netloc:
-                    return -1000
+    """
+    Domain whitelist and scoring table.
+    Prioritizes clean content mirrors and blacklists paywalled/community sites.
+    """
+    DOMAIN_WEIGHTS = {
+        "51read.org": 100,
+        "bige3.cc": 95,
+        "xbiquwx.la": 90,
+        "69shu.me": 85,
+        "shuhaige.net": 85,
+        "piaotia.com": 80,
+        "biquge.com": 75,
+        "biqu70.cc": 75,
+        "89wx.cc": 70,
+        "ttkan.co": 70,
+        "xxsy.net": -100,
+        "readnovel.com": -100,
+        "hongxiu.com": -100,
+        "xs8.cn": -100,
+        "qdmm.com": -300,
+        "qidian.com": -500,
+        "novel.qq.com": -500,
+        "tieba.baidu.com": -1000,
+        "zhihu.com": -1000,
+        "bilibili.com": -1000,
+        "weibo.com": -1000,
+        "douban.com": -1000,
+    }
 
-            # Check whitelist priority
-            for wl, score in DOMAIN_PRIORITY.items():
-                if wl in netloc:
-                    return score
+    @classmethod
+    def get_domain_score(cls, url: str) -> int:
+        for domain, score in cls.DOMAIN_WEIGHTS.items():
+            if domain in url:
+                return score
+        return 10
 
-            # Default positive score for unclassified domains
-            return 10
-        except Exception:
-            return -1000
+    @classmethod
+    def score_url(cls, url: str) -> int:
+        return cls.get_domain_score(url)
 
-    @staticmethod
-    def filter_and_sort_candidates(urls: List[str]) -> List[str]:
-        """Filters out blacklisted URLs and sorts candidates by domain score."""
-        scored = []
+    @classmethod
+    def is_blacklisted(cls, url: str) -> bool:
+        return cls.get_domain_score(url) <= -300
+
+    @classmethod
+    def filter_and_sort_candidates(cls, candidate_urls: List[str]) -> List[str]:
+        valid_urls = []
         seen = set()
-        for u in urls:
-            if u not in seen and u.startswith("http"):
-                seen.add(u)
-                score = DomainStrategy.score_url(u)
-                if score > 0:
-                    scored.append((score, u))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [u for _, u in scored]
+        for url in candidate_urls:
+            if not url or not url.startswith("http"):
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            if not cls.is_blacklisted(url):
+                valid_urls.append(url)
+
+        valid_urls.sort(key=lambda u: cls.get_domain_score(u), reverse=True)
+        return valid_urls
 
 
 class FallbackRouter:
-    def __init__(self, timeout: float = 8.0, min_char_length: int = 500):
+    """
+    Orchestrates fallback query construction, multi-engine SERP scraping,
+    and heuristic content extraction.
+    """
+    def __init__(self, timeout: float = 8.0, min_char_length: int = 350):
         self.timeout = timeout
         self.extractor = HeuristicExtractor()
         self.pipeline = RegexCleaningPipeline(min_char_length=min_char_length)
@@ -106,24 +98,66 @@ class FallbackRouter:
             'Accept-Language': 'zh-CN,zh;q=0.9',
         }
 
-    def build_query(self, novel_name: str, chapter_title: str) -> str:
-        """
-        Dynamically construct a structured search query.
-        """
-        # Clean chapter title from brackets and noise
-        clean_ch = re.sub(r'[\(（].*?[\)）]', '', chapter_title).strip()
-        negative_filters = "-site:tieba.baidu.com -site:zhihu.com -site:bilibili.com -site:weibo.com"
-        return f'"{novel_name}" "{clean_ch}" "完整" {negative_filters}'
+    def build_search_query(self, novel_name: str, chapter_title: str) -> str:
+        """Builds clean high-recall search query."""
+        clean_ch = re.sub(r'第\s*[0-9零一二两三四五六七八九十百千万]+\s*[章节回集卷篇节]\s*', '', chapter_title)
+        clean_ch = re.sub(r'[\(（\[【].*?[\)）\]】]', '', clean_ch).strip()
+        sub_title = clean_ch if len(clean_ch) >= 2 else chapter_title
+        return f"{novel_name} {sub_title}"
 
-    async def query_serp(self, query: str, limit: int = 5) -> List[str]:
+    def build_query(self, novel_name: str, chapter_title: str) -> str:
+        return self.build_search_query(novel_name, chapter_title)
+
+    async def search_candidates(self, query: str) -> List[str]:
         """
-        Query lightweight static SERP endpoints (DuckDuckGo / Sogou) to get top candidate URLs.
+        Dispatches multi-engine search across Baidu, Sogou, Bing, and DuckDuckGo.
         """
         candidates: List[str] = []
         encoded_q = urllib.parse.quote(query)
 
         async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True, verify=False) as client:
-            # 1. DuckDuckGo HTML endpoint
+            # 1. Baidu Search
+            try:
+                baidu_url = f"https://www.baidu.com/s?wd={encoded_q}&rn=10"
+                resp = await client.get(baidu_url)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for a in soup.select(".result h3 a, .c-container h3 a"):
+                        href = a.get("href")
+                        if href and href.startswith("http"):
+                            candidates.append(href)
+            except Exception:
+                pass
+
+            # 2. Sogou Web
+            try:
+                sogou_url = f"https://www.sogou.com/web?query={encoded_q}"
+                resp = await client.get(sogou_url)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    for a in soup.select(".results a"):
+                        href = a.get("href", "")
+                        if href.startswith("/"):
+                            href = f"https://www.sogou.com{href}"
+                        if href.startswith("http") and "sogou.com/link" in href:
+                            candidates.append(href)
+            except Exception:
+                pass
+
+            # 3. Bing Web
+            try:
+                bing_url = f"https://cn.bing.com/search?q={encoded_q}"
+                resp = await client.get(bing_url)
+                if resp.status_code == 200:
+                    soup = BeautifulSoup(resp.content.decode("utf-8", errors="ignore"), "html.parser")
+                    for a in soup.select("#b_results li.b_algo h2 a"):
+                        href = a.get("href", "")
+                        if href.startswith("http"):
+                            candidates.append(href)
+            except Exception:
+                pass
+
+            # 4. DuckDuckGo HTML
             try:
                 ddg_url = f"https://html.duckduckgo.com/html/?q={encoded_q}"
                 resp = await client.post(ddg_url, data={"q": query})
@@ -140,82 +174,48 @@ class FallbackRouter:
             except Exception:
                 pass
 
-            # 2. Sogou Web search fallback
-            if len(candidates) < limit:
-                try:
-                    sogou_url = f"https://www.sogou.com/web?query={encoded_q}"
-                    resp = await client.get(sogou_url)
-                    if resp.status_code == 200:
-                        soup = BeautifulSoup(resp.text, "html.parser")
-                        for a in soup.select(".results .vrwrap a, .results .rb a"):
-                            href = a.get("href", "")
-                            if href.startswith("/"):
-                                href = f"https://www.sogou.com{href}"
-                            if href.startswith("http") and "sogou.com/link" in href:
-                                candidates.append(href)
-                except Exception:
-                    pass
+        return DomainStrategy.filter_and_sort_candidates(candidates)
 
-        return DomainStrategy.filter_and_sort_candidates(candidates)[:limit]
-
-    async def probe_and_extract(
+    async def fallback_route(
         self,
         novel_name: str,
         chapter_title: str,
-        target_url: str,
-        client: httpx.AsyncClient
-    ) -> Optional[str]:
+        max_retries: int = 8
+    ) -> Tuple[str, str]:
         """
-        Probe a candidate URL, heuristically extract content and validate via pipeline.
+        Executes fallback routing to recover full chapter text.
         """
-        try:
-            resp = await client.get(target_url, timeout=self.timeout)
-            if resp.status_code != 200:
-                return None
+        query = self.build_search_query(novel_name, chapter_title)
+        candidates = await self.search_candidates(query)
 
-            enc = resp.encoding if resp.encoding and resp.encoding != 'iso-8859-1' else 'utf-8'
-            try:
-                html = resp.content.decode(enc, errors='replace')
-            except Exception:
-                html = resp.text
+        if not candidates:
+            raise SourceExhaustedError(chapter_title, f"No fallback candidates found for query: {query}")
 
-            # Heuristic extraction
-            raw_extracted = self.extractor.extract_article_text(html, url=target_url)
-            if not raw_extracted:
-                return None
-
-            # Pipeline cleaning & minimum threshold validation
-            clean_body = self.pipeline.clean_text(
-                raw_text=raw_extracted,
-                chapter_title=chapter_title,
-                source_url=target_url
-            )
-            return clean_body
-        except DataIncompleteError:
-            return None
-        except Exception:
-            return None
-
-    async def fallback_route(self, novel_name: str, chapter_title: str) -> Tuple[str, str]:
-        """
-        Main fallback entry point. Dispatches dynamic SERP query and probes top candidates.
-        Returns:
-            (clean_chapter_content, matched_source_url)
-        Raises:
-            SourceExhaustedError if no candidate returns valid full text.
-        """
-        query = self.build_query(novel_name, chapter_title)
-        candidate_urls = await self.query_serp(query, limit=6)
-
-        if not candidate_urls:
-            raise SourceExhaustedError(chapter_title, [])
-
-        attempted = []
         async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True, verify=False) as client:
-            for url in candidate_urls:
-                attempted.append(url)
-                content = await self.probe_and_extract(novel_name, chapter_title, url, client)
-                if content:
-                    return content, url
+            for idx, url in enumerate(candidates[:max_retries]):
+                try:
+                    resp = await client.get(url, timeout=self.timeout)
+                    if resp.status_code != 200:
+                        continue
 
-        raise SourceExhaustedError(chapter_title, attempted)
+                    enc = resp.encoding if resp.encoding and resp.encoding != 'iso-8859-1' else 'utf-8'
+                    try:
+                        html = resp.content.decode(enc, errors='replace')
+                    except Exception:
+                        html = resp.text
+
+                    raw_text = self.extractor.extract_article_text(html, url=str(resp.url))
+                    if not raw_text or len(raw_text) < 300:
+                        continue
+
+                    clean_text = self.pipeline.clean_text(raw_text, chapter_title=chapter_title, source_url=str(resp.url))
+                    if len(clean_text) >= 300:
+                        return clean_text, str(resp.url)
+
+                except Exception:
+                    continue
+
+        raise SourceExhaustedError(
+            chapter_title,
+            f"All {min(len(candidates), max_retries)} candidate fallback sources failed or returned incomplete content"
+        )

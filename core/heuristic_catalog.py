@@ -1,5 +1,5 @@
 """
-Heuristic Catalog and Pagination Discovery Engine.
+Heuristic Catalog and Pagination Discovery Engine with Catalog Cohesion & Anti-Noise Validation.
 Extracts book metadata, catalog links, and dynamically follows pagination links without hardcoded site rules.
 """
 
@@ -86,7 +86,44 @@ class HeuristicCatalogExtractor:
                         return target
         return None
 
-    async def discover_catalog(self, start_url: str, html_preset: Optional[str] = None) -> Tuple[Dict[str, str], List[Tuple[int, str, str, float]]]:
+    @staticmethod
+    def is_valid_catalog(chapters: List[Tuple[float, str, str]]) -> bool:
+        """
+        Validates if extracted chapter list belongs to a genuine single novel catalog,
+        and not a random multi-book search/tag aggregation snippet.
+        """
+        if not chapters:
+            return False
+
+        # If we have >= 15 chapters, it's very likely a genuine catalog
+        if len(chapters) >= 15:
+            return True
+
+        # If < 15 chapters, check numerical continuity
+        nums = [num for num, title, url in chapters if num > 0]
+        if not nums:
+            # If all are unnumbered, require at least 5 chapters
+            return len(chapters) >= 5
+
+        # Check if numbers start from 1..N (e.g. chapters 1, 2, 3...)
+        if min(nums) <= 3 and (max(nums) - min(nums)) <= len(nums) * 3:
+            return True
+
+        # If chapters have massive jump gaps (e.g. 111, 343, 912, 1053), this is an aggregator page
+        if len(nums) >= 3:
+            jumps = [nums[i+1] - nums[i] for i in range(len(nums)-1)]
+            avg_jump = sum(jumps) / len(jumps)
+            if avg_jump > 30:
+                # Discontinuous aggregator page -> Invalid catalog
+                return False
+
+        return True
+
+    async def discover_catalog(
+        self,
+        start_url: str,
+        html_preset: Optional[str] = None
+    ) -> Tuple[Dict[str, str], List[Tuple[int, str, str, float]]]:
         """
         Discovers all chapter items by dynamically traversing catalog pagination.
         Returns:
@@ -138,7 +175,6 @@ class HeuristicCatalogExtractor:
                         meta = self.extract_metadata_from_soup(soup, current_url)
 
                     all_a = soup.find_all("a", href=True)
-                    page_new = 0
 
                     for a in all_a:
                         raw_title = a.get_text(strip=True)
@@ -155,7 +191,6 @@ class HeuristicCatalogExtractor:
                                 seen_urls.add(full_url)
                                 num, _ = extract_chapter_number(clean_title)
                                 chapters_raw.append((num, clean_title, full_url))
-                                page_new += 1
 
                     # Look for next page link
                     next_page = self.find_next_page_link(soup, current_url)
@@ -166,6 +201,10 @@ class HeuristicCatalogExtractor:
 
                 except Exception:
                     break
+
+        # Validate catalog cohesion
+        if not self.is_valid_catalog(chapters_raw):
+            return meta, []
 
         # Chronological sort
         if len(chapters_raw) > 1 and chapters_raw[0][0] > chapters_raw[-1][0] and chapters_raw[-1][0] > 0:
