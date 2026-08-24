@@ -1,5 +1,5 @@
 """
-Command Line Interface for Novel Latest Chapter Aggregator and Tracker.
+Command Line Interface for Novel Latest Chapter Aggregator, Tracker, and Universal Extractor.
 """
 
 import argparse
@@ -18,13 +18,14 @@ from sources import SourceManager
 from core.tracker import NovelTracker
 from core.notifier import Notifier
 from core.downloader import NovelDownloader
+from core.universal_engine import UniversalNovelExtractor
 
 
 def print_banner():
     banner = """
 ╔═════════════════════════════════════════════════════════════════╗
-║            📚 全网小说最新章节聚合与追更监控系统                 ║
-║                Novel Latest Chapter Tracker                     ║
+║            📚 全网小说最新章节聚合、监控与通用提取系统           ║
+║            Universal Novel Tracker & Content Extractor          ║
 ╚═════════════════════════════════════════════════════════════════╝
     """
     print(banner)
@@ -179,6 +180,19 @@ async def cmd_download(novel_name: str, url: Optional[str], start: int, limit: O
     )
 
 
+async def cmd_extract(target: str, formats: str, start: int, limit: Optional[int], output: str, concurrency: int):
+    """Extract novel from arbitrary URL or book title into TXT/EPUB/JSON."""
+    format_list = [f.strip().lower() for f in formats.split(",") if f.strip()]
+    extractor = UniversalNovelExtractor(output_dir=output, concurrency=concurrency)
+    await extractor.extract(
+        input_target=target,
+        formats=format_list,
+        start_chapter=start,
+        limit_chapters=limit,
+        custom_output_dir=output
+    )
+
+
 async def cmd_monitor(interval_minutes: int):
     """Run continuous monitoring loop."""
     print(f"\n🔄 进入自动后台监控模式，每 {interval_minutes} 分钟检查一次更新...")
@@ -200,7 +214,7 @@ async def cmd_monitor(interval_minutes: int):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="全网小说最新章节聚合与追更监控工具",
+        description="全网小说最新章节聚合、监控与通用提取系统",
         formatter_class=argparse.RawTextHelpFormatter
     )
     subparsers = parser.add_subparsers(dest="command", help="支持的子命令")
@@ -232,6 +246,15 @@ def main():
     p_download.add_argument("-o", "--output", type=str, default="downloads", help="输出文件夹，默认 downloads")
     p_download.add_argument("-c", "--concurrency", type=int, default=8, help="并发下载数，默认 8")
 
+    # extract (Universal Extractor)
+    p_extract = subparsers.add_parser("extract", help="通用小说提取器：输入任意小说 URL（详情/目录/单章）或书名，一键导出 TXT/EPUB/JSON")
+    p_extract.add_argument("target", type=str, help="任意小说相关 URL（详情页/目录页/单章阅读页）或小说名称")
+    p_extract.add_argument("-f", "--format", type=str, default="txt,epub", help="导出格式，逗号分隔，如 txt,epub,json 或 all，默认 txt,epub")
+    p_extract.add_argument("--start", type=int, default=1, help="起始章节序号，默认 1")
+    p_extract.add_argument("--limit", type=int, default=None, help="最多提取章节数（可选）")
+    p_extract.add_argument("-o", "--output", type=str, default="downloads", help="输出文件夹，默认 downloads")
+    p_extract.add_argument("-c", "--concurrency", type=int, default=12, help="并发下载数，默认 12")
+
     # monitor
     p_monitor = subparsers.add_parser("monitor", help="启动持续监控模式")
     p_monitor.add_argument("-i", "--interval", type=int, default=15, help="检查间隔（分钟），默认 15 分钟")
@@ -255,6 +278,8 @@ def main():
         asyncio.run(cmd_check())
     elif args.command == "download":
         asyncio.run(cmd_download(args.name, args.url, args.start, args.limit, args.output, args.concurrency))
+    elif args.command == "extract":
+        asyncio.run(cmd_extract(args.target, args.format, args.start, args.limit, args.output, args.concurrency))
     elif args.command == "monitor":
         asyncio.run(cmd_monitor(args.interval))
 
