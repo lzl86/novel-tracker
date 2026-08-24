@@ -1,11 +1,11 @@
 """
 Heuristic Catalog and Pagination Discovery Engine.
-Extracts book metadata, catalog links, and handles arbitrary pagination without hardcoded site rules.
+Extracts book metadata, catalog links, and dynamically follows pagination links without hardcoded site rules.
 """
 
 import re
 from typing import List, Optional, Tuple, Dict
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
@@ -45,7 +45,6 @@ class HeuristicCatalogExtractor:
                 meta["title"] = h1.get_text(strip=True)
 
         if not meta["title"] and soup.title:
-            # Clean title e.g. 《宿命之环》最新章节 -> 宿命之环
             t = soup.title.get_text(strip=True)
             m = re.search(r'《(.*?)》', t)
             if m:
@@ -53,7 +52,6 @@ class HeuristicCatalogExtractor:
             else:
                 meta["title"] = re.sub(r'[_|\-—].*$', '', t).replace('最新章节', '').replace('全文阅读', '').strip()
 
-        # Author regex in text
         if meta["author"] == "未知":
             full_text = soup.get_text()
             m = re.search(r'作\s*者[：:\s]*([^\s,，。；|_\-—\n\r<]{1,12})', full_text)
@@ -64,13 +62,11 @@ class HeuristicCatalogExtractor:
 
     def find_catalog_link_from_detail(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """Finds entry link to full catalog from a book detail page."""
-        # Check explicit buttons / anchors
         for a in soup.find_all("a", href=True):
             text = a.get_text(strip=True)
             if any(k in text for k in ("全部章节", "章节目录", "查看目录", "完整目录", "目录列表", "更多章节")):
                 return urljoin(current_url, a["href"])
 
-        # Check anchors containing /mulu/ or /catalog/ or /chapters/
         for a in soup.find_all("a", href=True):
             href = a["href"]
             if any(k in href for k in ("/mulu", "/catalog", "/chapters", "/zhangjie", "/dir")):
@@ -78,19 +74,32 @@ class HeuristicCatalogExtractor:
 
         return None
 
+    def find_next_page_link(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
+        """Finds dynamic '下一页' link from catalog page."""
+        for a in soup.find_all("a", href=True):
+            text = a.get_text(strip=True)
+            if any(k == text for k in ("下一页", "下页", "下一頁", "下頁", "下一组", "Next")):
+                href = a["href"]
+                if not href.startswith("javascript") and not href.startswith("#"):
+                    target = urljoin(current_url, href)
+                    if target != current_url:
+                        return target
+        return None
+
     async def discover_catalog(self, start_url: str, html_preset: Optional[str] = None) -> Tuple[Dict[str, str], List[Tuple[int, str, str, float]]]:
         """
-        Discovers all chapter items with automatic pagination traversal.
+        Discovers all chapter items by dynamically traversing catalog pagination.
         Returns:
             (metadata_dict, chapters_list: [(index, title, url, chapter_num), ...])
         """
         chapters_raw: List[Tuple[float, str, str]] = []
         seen_urls = set()
+        visited_pages = set()
         meta = {"title": "未知小说", "author": "未知"}
 
         async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True, verify=False) as client:
-            # If start_url is detail page, try to pivot to catalog page
             current_url = start_url
+
             if html_preset:
                 soup = BeautifulSoup(html_preset, "html.parser")
             else:
@@ -99,32 +108,22 @@ class HeuristicCatalogExtractor:
 
             meta = self.extract_metadata_from_soup(soup, current_url)
 
-            # Check if there is a separate catalog link
+            # Pivot from detail page to catalog page if link exists
             catalog_pivot = self.find_catalog_link_from_detail(soup, current_url)
             if catalog_pivot and catalog_pivot != current_url:
                 current_url = catalog_pivot
 
-            page = 1
+            page_count = 0
             max_pages = 60
 
-            while page <= max_pages:
-                page_url = current_url
-                if page > 1:
-                    # Construct heuristic pagination URL
-                    if "/zhangjiemulu/" in current_url:
-                        base = re.sub(r'(/zhangjiemulu/\d+)(?:/\d+)?$', r'\1', current_url.rstrip('/'))
-                        page_url = f"{base}/{page}"
-                    elif "page=" in current_url:
-                        page_url = re.sub(r'page=\d+', f'page={page}', current_url)
-                    elif re.search(r'_\d+\.html', current_url):
-                        page_url = re.sub(r'_\d+\.html', f'_{page}.html', current_url)
-                    elif current_url.endswith("/"):
-                        page_url = f"{current_url}{page}"
-                    else:
-                        break
+            while current_url and page_count < max_pages:
+                if current_url in visited_pages:
+                    break
+                visited_pages.add(current_url)
+                page_count += 1
 
                 try:
-                    resp = await client.get(page_url)
+                    resp = await client.get(current_url)
                     if resp.status_code != 200:
                         break
 
@@ -136,7 +135,7 @@ class HeuristicCatalogExtractor:
 
                     soup = BeautifulSoup(html, "html.parser")
                     if not meta["title"] or meta["title"] == "未知小说":
-                        meta = self.extract_metadata_from_soup(soup, page_url)
+                        meta = self.extract_metadata_from_soup(soup, current_url)
 
                     all_a = soup.find_all("a", href=True)
                     page_new = 0
@@ -150,26 +149,21 @@ class HeuristicCatalogExtractor:
 
                         clean_title = re.sub(r'(?:APP免费|VIP免费|免费阅读|更新时间.*$)', '', raw_title).strip()
 
-                        # Chapter pattern matching
                         if re.search(r'(第\s*[0-9零一二两三四五六七八九十百千万]+\s*[章节回集卷篇节]|^\s*[0-9]+[\.、\s]|终章|大结局|完本感言|序章|楔子)', clean_title):
-                            full_url = urljoin(page_url, href)
+                            full_url = urljoin(current_url, href)
                             if full_url not in seen_urls:
                                 seen_urls.add(full_url)
                                 num, _ = extract_chapter_number(clean_title)
                                 chapters_raw.append((num, clean_title, full_url))
                                 page_new += 1
 
-                    if page_new == 0:
+                    # Look for next page link
+                    next_page = self.find_next_page_link(soup, current_url)
+                    if next_page and next_page not in visited_pages:
+                        current_url = next_page
+                    else:
                         break
 
-                    has_next = any("下一页" in a.get_text() for a in all_a)
-                    if not has_next and page > 1:
-                        break
-
-                    if not has_next and "/zhangjiemulu/" not in current_url:
-                        break
-
-                    page += 1
                 except Exception:
                     break
 
