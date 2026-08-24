@@ -132,6 +132,15 @@ class UniversalNovelExtractor:
 
                     raw_text = self.extractor.extract_article_text(html, url=url)
                     clean_body = self.pipeline.clean_text(raw_text, chapter_title=title, source_url=url)
+                elif resp.status_code == 403:
+                    # Cloudflare 403 fallback
+                    from core.browser_fetcher import BrowserFetcher
+                    bf = BrowserFetcher()
+                    rendered = await bf.fetch_html(url)
+                    if rendered:
+                        raw_text = self.extractor.extract_article_text(rendered, url=url)
+                        clean_body = self.pipeline.clean_text(raw_text, chapter_title=title, source_url=url)
+                        source_info = "浏览器抗盾"
             except Exception:
                 clean_body = None
 

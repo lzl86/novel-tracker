@@ -2,5 +2,6 @@
   "pushplus_token": "YOUR_PUSHPLUS_TOKEN",
   "serverchan_sendkey": "YOUR_SERVERCHAN_SENDKEY",
   "custom_webhook_url": "",
-  "enable_desktop_notification": true
+  "enable_desktop_notification": true,
+  "cloudflare_cookie": "cf_clearance=YOUR_CF_CLEARANCE_COOKIE_IF_NEEDED"
 }

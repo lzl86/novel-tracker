@@ -66,6 +66,17 @@ class URLClassifier:
                 except Exception:
                     html = resp.text
 
+                # If 403 or Cloudflare 5s challenge, fallback to BrowserFetcher
+                if resp.status_code == 403 or "Just a moment" in html or "请稍候" in html:
+                    try:
+                        from core.browser_fetcher import BrowserFetcher
+                        bf = BrowserFetcher()
+                        rendered = await bf.fetch_html(text)
+                        if rendered:
+                            html = rendered
+                    except Exception:
+                        pass
+
                 soup = BeautifulSoup(html, "html.parser")
                 page_title = soup.title.get_text(strip=True) if soup.title else ""
 
