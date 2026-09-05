@@ -33,10 +33,19 @@ class SourceCache:
             self.data = {}
 
     def save(self) -> None:
-        """Save source cache to disk."""
+        """Save source cache to disk safely with atomic replace."""
         os.makedirs(os.path.dirname(self.storage_path), exist_ok=True)
-        with open(self.storage_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
+        tmp_path = f"{self.storage_path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+            if os.path.exists(self.storage_path):
+                os.replace(tmp_path, self.storage_path)
+            else:
+                os.rename(tmp_path, self.storage_path)
+        except Exception:
+            with open(self.storage_path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def get(self, book_name: str) -> Optional[dict]:
         """Get cached source info for a novel."""
@@ -50,10 +59,12 @@ class SourceCache:
         total_chapters: int,
         last_chapter_title: str = "",
         author: str = "未知",
-        source_name: str = "全网聚合"
+        source_name: str = "全网聚合",
+        success_rate: float = 100.0,
+        status: str = "healthy"
     ) -> dict:
         """
-        Record or update verified catalog URL for a novel.
+        Record or update verified catalog URL for a novel with health metadata.
         """
         clean_name = book_name.strip().replace("《", "").replace("》", "")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -65,6 +76,8 @@ class SourceCache:
             "last_chapter_title": last_chapter_title,
             "author": author,
             "source_name": source_name,
+            "success_rate": round(success_rate, 1),
+            "status": status,
             "updated_at": now_str
         }
         self.data[clean_name] = entry
