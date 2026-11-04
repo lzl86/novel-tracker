@@ -15,13 +15,13 @@ kotlin {
         }
         jvmMain {
             kotlin.srcDir(data.resolve("jvmAndAndroidMain/kotlin"))
-            kotlin.include("**/RemoteEpubSnapshot.kt", "**/Inflate.jvmAndAndroid.kt", "**/ZipIOException.jvmAndAndroid.kt")
+            kotlin.include("**/ImportedFileReplacement.kt", "**/RemoteEpubSnapshot.kt", "**/Inflate.jvmAndAndroid.kt", "**/ZipIOException.jvmAndAndroid.kt")
             dependencies { implementation("com.squareup.okhttp3:okhttp:5.4.0") }
         }
         jvmTest {
             kotlin.srcDir(data.resolve("jvmAndAndroidTest/kotlin"))
             kotlin.srcDir("src/jvmTest/kotlin")
-            kotlin.include("**/RemoteZipCoreTest.kt", "**/RemoteEpubSnapshotTest.kt", "**/ZipTestFixtures.kt", "**/EpubChapterPositionTest.kt", "**/NovelTrackerReleasePolicyTest.kt")
+            kotlin.include("**/RemoteZipCoreTest.kt", "**/RemoteEpubSnapshotTest.kt", "**/ZipTestFixtures.kt", "**/EpubChapterPositionTest.kt", "**/NovelTrackerReleasePolicyTest.kt", "**/ImportedFileReplacementTest.kt")
             dependencies { implementation("junit:junit:4.13.2") }
         }
     }

@@ -58,6 +58,50 @@ index 12fe93d..d63b9d3 100644
              deleteBook(dbBook, false)
              dbBook.apply {
                  this.name = book.name
+diff --git a/app/src/main/java/io/legado/app/ui/association/FileAssociationFragment.kt b/app/src/main/java/io/legado/app/ui/association/FileAssociationFragment.kt
+index 55dc237..5e924f0 100644
+--- a/app/src/main/java/io/legado/app/ui/association/FileAssociationFragment.kt
++++ b/app/src/main/java/io/legado/app/ui/association/FileAssociationFragment.kt
+@@ -205,15 +205,15 @@ class FileAssociationFragment(private val isShellHost: Boolean = false) : Fragme
+                         this@FileAssociationFragment.readUri(uri) { fileDoc, inputStream ->
+                             val name = fileDoc.name
+                             var doc = treeDoc.findFile(name)
+-                            if (doc == null || fileDoc.lastModified > doc.lastModified()) {
+-                                if (doc == null) {
+-                                    doc = treeDoc.createFile(FileUtils.getMimeType(name), name)
+-                                        ?: throw InvalidBooksDirException("请重新设置书籍保存位置")
+-                                }
+-                                requireContext().contentResolver.openOutputStream(doc.uri)!!
+-                                    .use { oStream ->
+-                                        inputStream.copyTo(oStream)
+-                                    }
++                            if (doc == null) {
++                                doc = treeDoc.createFile(FileUtils.getMimeType(name), name)
++                                    ?: throw InvalidBooksDirException("请重新设置书籍保存位置")
++                            }
++                            io.legado.app.model.fileBook.ImportedFileReplacement.copy(
++                                inputStream, requireContext().cacheDir
++                            ) {
++                                requireContext().contentResolver.openOutputStream(doc.uri, "wt")
++                                    ?: error("无法写入书籍文件")
+                             }
+                             viewModel.importBook(doc.uri)
+                         }
+@@ -225,11 +225,9 @@ class FileAssociationFragment(private val isShellHost: Boolean = false) : Fragme
+                         this@FileAssociationFragment.readUri(uri) { fileDoc, inputStream ->
+                             val name = fileDoc.name
+                             val file = treeFile.getFile(name)
+-                            if (!file.exists() || fileDoc.lastModified > file.lastModified()) {
+-                                FileOutputStream(file).use { oStream ->
+-                                    inputStream.copyTo(oStream)
+-                                }
+-                            }
++                            io.legado.app.model.fileBook.ImportedFileReplacement.copy(
++                                inputStream, requireContext().cacheDir
++                            ) { FileOutputStream(file) }
+                             viewModel.importBook(Uri.fromFile(file))
+                         }
+                     }
 diff --git a/core/src/commonMain/kotlin/io/legado/app/help/book/BookChapterLoader.kt b/core/src/commonMain/kotlin/io/legado/app/help/book/BookChapterLoader.kt
 index 49eeed6..04a1d54 100644
 --- a/core/src/commonMain/kotlin/io/legado/app/help/book/BookChapterLoader.kt
@@ -405,6 +449,35 @@ index a72a93c..3ee9aa7 100644
      }
  
  }
+diff --git a/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/ImportedFileReplacement.kt b/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/ImportedFileReplacement.kt
+new file mode 100644
+index 0000000..a68862a
+--- /dev/null
++++ b/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/ImportedFileReplacement.kt
+@@ -0,0 +1,23 @@
++package io.legado.app.model.fileBook
++
++import java.io.File
++import java.io.InputStream
++import java.io.OutputStream
++
++/** Explicit import replaces bytes, regardless of unreliable provider timestamps.
++ * Stage the entire input before opening the destination, including same-file imports.
++ */
++object ImportedFileReplacement {
++    fun copy(input: InputStream, cacheDirectory: File, openDestination: () -> OutputStream) {
++        val staged = File.createTempFile("reader-import-", ".tmp", cacheDirectory)
++        try {
++            staged.outputStream().use { input.copyTo(it) }
++            require(staged.length() > 0) { "导入文件为空，未覆盖原书籍" }
++            openDestination().use { destination ->
++                staged.inputStream().use { it.copyTo(destination) }
++            }
++        } finally {
++            staged.delete()
++        }
++    }
++}
 diff --git a/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshot.kt b/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshot.kt
 new file mode 100644
 index 0000000..2051754

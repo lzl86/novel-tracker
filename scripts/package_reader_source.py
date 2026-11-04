@@ -22,7 +22,7 @@ novel-tracker/ contains the companion build scripts, patch and documentation.
 To build without relying on the community mirror:
 1. Move legado/ to novel-tracker/client/legado-source/.
 2. In that source directory, run git init, git add ., and git -c user.name=SourceBundle -c user.email=source@example.invalid commit -m source-bundle.
-   The upstream Gradle build requires a Git repository; the companion script explicitly sets versionCode 10002.
+   The upstream Gradle build requires a Git repository; the companion script explicitly sets versionCode 10003.
 3. From novel-tracker/, follow client/EPUB修复说明.md to prepare the Windows toolchain/SDK and run scripts/build_reader.ps1.
    Skip prepare_reader_source.py when using this extracted bundle.
 
@@ -37,7 +37,8 @@ Base: c290beb185172801040ac3d4c519ec07db867ae7 (community tag 3.26.100113).
                      "scripts/build_reader.ps1", "scripts/prepare_reader_toolchain.py", "scripts/prepare_reader_source.py",
                      "scripts/package_reader_source.py", "client/reader-regression/build.gradle.kts",
                      "client/reader-regression/settings.gradle.kts", "client/reader-regression/.gitignore",
-                     "client/reader-regression/src/jvmTest/kotlin/NovelTrackerReleasePolicyTest.kt"]:
+                     "client/reader-regression/src/jvmTest/kotlin/NovelTrackerReleasePolicyTest.kt",
+                     "client/reader-regression/src/jvmTest/kotlin/ImportedFileReplacementTest.kt"]:
             z.write(ROOT / name, "novel-tracker/" + name)
     print(archive)
 
