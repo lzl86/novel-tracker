@@ -76,4 +76,4 @@ JSON 沿用 GithubRelease 字段格式，专用标签与数字版本、ARM64 安
 发布必须先上传版本目录内 APK、完整源码及 SHA256SUMS 并验证，再原子替换 releases.json 和首页，禁止覆盖已发布版本的 APK。
 HTTPS 证书由 certbot 签发；自动续期需另行验证；Nginx 提供静态文件与 Range 下载。只分发客户端，无个人书籍或签名密钥。
 
-当前部署状态：DNS-01 证书已签发，2027-02-02 到期。公网443已放行，HTTPS首页、更新JSON、完整APK哈希及Range已验证。自动续期尚在验证，不能视为无人值守续期已完成。
+当前部署状态：DNS-01 证书已签发，2027-02-02 到期。公网443已放行，HTTPS首页、更新JSON、完整APK哈希及Range已验证。自动续期HTTP验证被云厂商webblock跳转干扰，尚未完成。需在服务器配置仅限该域名的Cloudflare DNS编辑Token，采用DNS-01自动续期。当前OAuth连接无权生成此Token；不要把Token写入Git或聊天。
