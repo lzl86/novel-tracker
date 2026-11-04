@@ -12,6 +12,11 @@ class NovelTrackerReleasePolicyTest {
         assertTrue(Policy.isNewer("reader-epubfix-3.26.110402", "3.26.110401debug"))
         assertFalse(Policy.isNewer("reader-epubfix-3.26.100113", "3.26.110401debug"))
     }
+    @Test fun acceptsOnlyHttpsVersionedCloudPath() {
+        assertTrue(Policy.isAllowedDownload("https://logicnexus.icu/reader/releases/3.26.110403/legado-epubfix-arm64.apk"))
+        assertFalse(Policy.isAllowedDownload("http://logicnexus.icu/reader/releases/3.26.110403/legado-epubfix-arm64.apk"))
+        assertFalse(Policy.isAllowedDownload("https://logicnexus.icu.evil/reader/releases/3.26.110403/legado-epubfix-arm64.apk"))
+    }
     @Test fun rejectsCommunityOrWrongAssets() {
         val root = "https://github.com/lzl86/novel-tracker/releases/download/reader-epubfix-3.26.110402/"
         assertTrue(Policy.isAllowedDownload(root + "legado-epubfix-arm64.apk"))

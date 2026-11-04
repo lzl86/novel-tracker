@@ -27,7 +27,7 @@ if ($Mode -eq 'test') {
     $source = Join-Path $buildRoot 'client\reader-regression'
     $arguments += @('jvmTest')
 } else {
-    $arguments += @(':app:assembleAppDebug', '-PappVersion=3.26.110402', '-PreaderVersionCode=10003', '-PepubFixBuild=true')
+    $arguments += @(':app:assembleAppDebug', '-PappVersion=3.26.110403', '-PreaderVersionCode=10004', '-PepubFixBuild=true')
 }
 Push-Location $source
 try { & $gradle @arguments; if ($LASTEXITCODE -ne 0) { throw "Gradle failed: $LASTEXITCODE" } }

@@ -137,7 +137,7 @@ index 49eeed6..04a1d54 100644
          }
 diff --git a/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleaseChecker.kt b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleaseChecker.kt
 new file mode 100644
-index 0000000..f0749ac
+index 0000000..430d1f1
 --- /dev/null
 +++ b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleaseChecker.kt
 @@ -0,0 +1,45 @@
@@ -156,7 +156,7 @@ index 0000000..f0749ac
 +        require(request.supportedAbis.any { it == "arm64-v8a" || it == "arm64" }) { "配套更新仅支持 ARM64" }
 +        val repo = NovelTrackerReleasePolicy.REPO
 +        val response = OkHttpClientProviders.get().okHttpClient.newCallResponse {
-+            url("https://api.github.com/repos/$repo/releases?per_page=100")
++            url("https://logicnexus.icu/reader/releases.json")
 +        }
 +        val releases = try {
 +            check(response.isSuccessful) { "配套客户端更新检查失败(${response.code})" }
@@ -182,16 +182,16 @@ index 0000000..f0749ac
 +            releaseNote = release.body,
 +            downloadUrl = asset.apkUrl,
 +            fileName = asset.name,
-+            landingUrl = "https://github.com/$repo/releases/tag/${release.tagName}",
++            landingUrl = "https://logicnexus.icu/reader/",
 +        ))
 +    }.getOrElse { UpdateCheckResult.Failed(it) }
 +}
 diff --git a/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleasePolicy.kt b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleasePolicy.kt
 new file mode 100644
-index 0000000..7b76d8e
+index 0000000..e12a496
 --- /dev/null
 +++ b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleasePolicy.kt
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,16 @@
 +package io.legado.app.help.update
 +
 +/** Dedicated companion channel: never interpret unrelated repo releases as APK updates. */
@@ -204,7 +204,8 @@ index 0000000..7b76d8e
 +        AppVersions.isNewer(it, current.removeSuffix("debug"))
 +    } ?: false
 +    fun isAllowedDownload(url: String): Boolean =
-+        url.startsWith("https://github.com/$REPO/releases/download/reader-epubfix-") &&
++        (url.startsWith("https://github.com/$REPO/releases/download/reader-epubfix-") ||
++                Regex("https://logicnexus\\.icu/reader/releases/\\d+\\.\\d+\\.\\d+/$ASSET").matches(url)) &&
 +            url.endsWith("/$ASSET") && !url.contains("?") && !url.contains("#")
 +}
 diff --git a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/BaseFileBook.kt b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/BaseFileBook.kt
