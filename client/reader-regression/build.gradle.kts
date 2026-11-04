@@ -1,6 +1,7 @@
 plugins { kotlin("multiplatform") version "2.3.20" }
 
 // Compile the actual modified sources, without the unrelated Android/UI dependency graph.
+val core = file("../legado-source/core/src")
 val data = file("../legado-source/data/src")
 kotlin {
     jvm()
@@ -8,7 +9,8 @@ kotlin {
     sourceSets {
         commonMain {
             kotlin.srcDir(data.resolve("commonMain/kotlin"))
-            kotlin.include("**/RemoteZipCore.kt", "**/RangedSource.kt", "**/ZipStructure.kt", "**/Inflate.kt", "**/ZipIOException.kt", "**/EpubChapterPosition.kt")
+            kotlin.srcDir(core.resolve("commonMain/kotlin"))
+            kotlin.include("**/RemoteZipCore.kt", "**/RangedSource.kt", "**/ZipStructure.kt", "**/Inflate.kt", "**/ZipIOException.kt", "**/EpubChapterPosition.kt", "**/NovelTrackerReleasePolicy.kt", "**/AppVersions.kt")
             dependencies { implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0") }
         }
         jvmMain {
@@ -18,7 +20,8 @@ kotlin {
         }
         jvmTest {
             kotlin.srcDir(data.resolve("jvmAndAndroidTest/kotlin"))
-            kotlin.include("**/RemoteZipCoreTest.kt", "**/RemoteEpubSnapshotTest.kt", "**/ZipTestFixtures.kt", "**/EpubChapterPositionTest.kt")
+            kotlin.srcDir("src/jvmTest/kotlin")
+            kotlin.include("**/RemoteZipCoreTest.kt", "**/RemoteEpubSnapshotTest.kt", "**/ZipTestFixtures.kt", "**/EpubChapterPositionTest.kt", "**/NovelTrackerReleasePolicyTest.kt")
             dependencies { implementation("junit:junit:4.13.2") }
         }
     }

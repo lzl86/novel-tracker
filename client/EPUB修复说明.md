@@ -3,7 +3,7 @@
 源码基于社区 Fork `huajideshutiao/legado` 标签 `3.26.100113`，提交 `c290beb185172801040ac3d4c519ec07db867ae7`。
 修改后的完整源码在 `legado-source/`，原社区 APK 保留在 `legado-3.26-arm64.apk`。
 
-修复 APK 已成功构建：`legado-epubfix-arm64.apk`，33,997,847 字节；APK v2 签名验证通过。
+旧测试版（3.26.100113debug）的历史构建记录：`legado-epubfix-arm64.apk`，33,997,847 字节；APK v2 签名验证通过。
 SHA-256：`003234cb80d1e0895b5e35146ef4159b39d30de7b5d3d97e928b5e77cdf260f6`。
 完整 Android 编译已通过，尚未在手机上实测。
 首次本地验证中，服务器完整下载的 SHA-256 与本地 APK 一致，HTTP Range 已验证。
@@ -48,3 +48,11 @@ powershell -File scripts/build_reader.ps1 -Mode apk
 首次构建还需要 Android SDK 的 `platforms;android-37.0`、`build-tools;37.0.0`、`platform-tools`，运行解压后的 `cmdline-tools/bin/sdkmanager.bat --sdk_root=<SDK目录> --licenses` 阅读并接受 SDK 许可后，再安装这些组件；其余 SDK/NDK 依赖由 Gradle 安装。SDK 目录为 `storage/reader-toolchain/android-sdk`。
 如需保存构建日志，可使用 PowerShell `Tee-Object`。运行 `python scripts/package_reader_source.py` 生成对应的完整源码压缩包（包含未修改的基础源码、修复代码、测试和构建说明）。
 构建成功后安装包保存为 `client/legado-epubfix-arm64.apk`，手机通过热点下载：[下载 EPUB 修复版](http://192.168.137.1:5000/legado-fixed.apk)。
+
+## 2026-11-04 独立更新渠道
+
+本次构建版本为 `3.26.110401debug`，versionCode `10002`。保持包名 `shutiao.reader.debug` 和原测试签名，供旧修复版覆盖安装。
+本次只调整更新渠道，不含同名文件覆盖判断的修复；手机安装后的行为仍需实测。
+更新仓库为 `lzl86/novel-tracker`，标签格式 `reader-epubfix-3.26.110401`；APK 固定名 `legado-epubfix-arm64.apk`。
+关于页及自动检查均由专用检测器处理，忽略社区渠道偏好，只选择专用标签和 ARM64 APK。GitHub 访问失败会显示错误，不回退。
+26 项核心回归测试通过；Android 编译、APK 签名及实际下载在交付时另行验证。此版本准确文件哈希见 Release 的 SHA256SUMS.txt。

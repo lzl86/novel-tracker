@@ -1,8 +1,25 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 5eed122..5c6c419 100644
+index 5eed122..b0e3e61 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
-@@ -138,7 +138,9 @@ android {
+@@ -94,7 +94,7 @@ android {
+     }
+     defaultConfig {
+         applicationId = "shutiao.reader"
+-        versionCode = 10000 + gitCommits
++        versionCode = providers.gradleProperty("readerVersionCode").orNull?.toInt() ?: (10000 + gitCommits)
+         versionName = version
+         minSdk = 24
+         targetSdk = 36
+@@ -103,6 +103,7 @@ android {
+ 
+         val cronetVersion = libs.versions.cronet.get()
+         val cronetMainVersion = cronetVersion.substring(0, cronetVersion.indexOf('.')) + ".0.0.0"
++        buildConfigField("boolean", "EPUB_FIX_BUILD", (providers.gradleProperty("epubFixBuild").orNull == "true").toString())
+         buildConfigField("String", "Cronet_Version", "\"$cronetVersion\"")
+         buildConfigField("String", "Cronet_Main_Version", "\"$cronetMainVersion\"")
+     }
+@@ -138,7 +139,9 @@ android {
              if (project.hasProperty("RELEASE_STORE_FILE")) {
                  signingConfig = signingConfigs.getByName("myConfig")
              }
@@ -13,6 +30,20 @@ index 5eed122..5c6c419 100644
  
              applicationIdSuffix = ".debug"
              versionNameSuffix = "debug"
+diff --git a/app/src/main/java/io/legado/app/help/update/AndroidAppUpdate.kt b/app/src/main/java/io/legado/app/help/update/AndroidAppUpdate.kt
+index effd881..8affe09 100644
+--- a/app/src/main/java/io/legado/app/help/update/AndroidAppUpdate.kt
++++ b/app/src/main/java/io/legado/app/help/update/AndroidAppUpdate.kt
+@@ -17,6 +17,9 @@ import io.legado.app.help.config.AppConfig
+  * checkingUpdate 置灰入口承担, 弹窗与检测都在 shared, 不再需要 Android 专属分支。
+  */
+ fun registerAndroidAppUpdate() {
++    if (io.legado.app.BuildConfig.EPUB_FIX_BUILD) {
++        UpdateCheckers.register(UpdatePlatform.ANDROID, NovelTrackerReleaseChecker())
++    }
+     AppUpdateManager.register(AndroidUpdateEnvironment)
+ }
+ 
 diff --git a/app/src/main/java/io/legado/app/model/fileBook/FileBookAccessorImpl.kt b/app/src/main/java/io/legado/app/model/fileBook/FileBookAccessorImpl.kt
 index 12fe93d..d63b9d3 100644
 --- a/app/src/main/java/io/legado/app/model/fileBook/FileBookAccessorImpl.kt
@@ -60,6 +91,78 @@ index 49eeed6..04a1d54 100644
          if (!handoff.isNullOrEmpty()) {
              return handoff
          }
+diff --git a/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleaseChecker.kt b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleaseChecker.kt
+new file mode 100644
+index 0000000..f0749ac
+--- /dev/null
++++ b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleaseChecker.kt
+@@ -0,0 +1,45 @@
++package io.legado.app.help.update
++
++import io.legado.app.help.http.OkHttpClientProviders
++import io.legado.app.help.http.newCallResponse
++import io.legado.app.help.http.text
++import io.legado.app.utils.KS_JSON
++import kotlinx.serialization.decodeFromString
++
++/** Explicit own-channel checker; no fallback to community, including on API failure. */
++class NovelTrackerReleaseChecker : UpdateChecker {
++    override suspend fun check(request: UpdateCheckRequest): UpdateCheckResult = runCatching {
++        require(request.platform == UpdatePlatform.ANDROID) { "配套更新仅支持 Android" }
++        require(request.supportedAbis.any { it == "arm64-v8a" || it == "arm64" }) { "配套更新仅支持 ARM64" }
++        val repo = NovelTrackerReleasePolicy.REPO
++        val response = OkHttpClientProviders.get().okHttpClient.newCallResponse {
++            url("https://api.github.com/repos/$repo/releases?per_page=100")
++        }
++        val releases = try {
++            check(response.isSuccessful) { "配套客户端更新检查失败(${response.code})" }
++            KS_JSON.decodeFromString<List<GithubRelease>>(response.body.text())
++        } finally { response.close() }
++        val release = releases.filter {
++            NovelTrackerReleasePolicy.version(it.tagName.orEmpty()) != null &&
++                it.assets.orEmpty().any { asset ->
++                    asset.state == "uploaded" && asset.name == NovelTrackerReleasePolicy.ASSET &&
++                        NovelTrackerReleasePolicy.isAllowedDownload(asset.apkUrl)
++                }
++        }.maxWithOrNull { a, b ->
++            AppVersions.compare(NovelTrackerReleasePolicy.version(a.tagName!!)!!,
++                NovelTrackerReleasePolicy.version(b.tagName!!)!!)
++        } ?: error("尚无可用的配套客户端更新，请稍后重试")
++        if (!NovelTrackerReleasePolicy.isNewer(release.tagName!!, request.currentVersionName)) {
++            return@runCatching UpdateCheckResult.UpToDate
++        }
++        val asset = release.assets!!.first { it.name == NovelTrackerReleasePolicy.ASSET &&
++            it.state == "uploaded" && NovelTrackerReleasePolicy.isAllowedDownload(it.apkUrl) }
++        UpdateCheckResult.NewVersion(UpdateCheckInfo(
++            versionName = NovelTrackerReleasePolicy.version(release.tagName!!)!!,
++            releaseNote = release.body,
++            downloadUrl = asset.apkUrl,
++            fileName = asset.name,
++            landingUrl = "https://github.com/$repo/releases/tag/${release.tagName}",
++        ))
++    }.getOrElse { UpdateCheckResult.Failed(it) }
++}
+diff --git a/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleasePolicy.kt b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleasePolicy.kt
+new file mode 100644
+index 0000000..7b76d8e
+--- /dev/null
++++ b/core/src/commonMain/kotlin/io/legado/app/help/update/NovelTrackerReleasePolicy.kt
+@@ -0,0 +1,15 @@
++package io.legado.app.help.update
++
++/** Dedicated companion channel: never interpret unrelated repo releases as APK updates. */
++object NovelTrackerReleasePolicy {
++    const val REPO = "lzl86/novel-tracker"
++    const val ASSET = "legado-epubfix-arm64.apk"
++    private val tagPattern = Regex("reader-epubfix-(\\d+\\.\\d+\\.\\d+)")
++    fun version(tag: String): String? = tagPattern.matchEntire(tag)?.groupValues?.get(1)
++    fun isNewer(tag: String, current: String): Boolean = version(tag)?.let {
++        AppVersions.isNewer(it, current.removeSuffix("debug"))
++    } ?: false
++    fun isAllowedDownload(url: String): Boolean =
++        url.startsWith("https://github.com/$REPO/releases/download/reader-epubfix-") &&
++            url.endsWith("/$ASSET") && !url.contains("?") && !url.contains("#")
++}
 diff --git a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/BaseFileBook.kt b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/BaseFileBook.kt
 index 60bbc88..365327c 100644
 --- a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/BaseFileBook.kt
@@ -72,6 +175,21 @@ index 60bbc88..365327c 100644
 +    /** Whether the underlying file changed since its last successful parse. */
 +    fun refreshIfChanged(book: Book): Boolean = false
  }
+diff --git a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/EpubChapterPosition.kt b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/EpubChapterPosition.kt
+new file mode 100644
+index 0000000..7235ebd
+--- /dev/null
++++ b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/EpubChapterPosition.kt
+@@ -0,0 +1,9 @@
++package io.legado.app.model.fileBook
++
++/** Keep the same chapter when an updated EPUB inserts/removes/reorders earlier entries. */
++internal fun epubChapterPosition(titles: List<String>, title: String, index: Int): Int {
++    if (titles.isEmpty()) return 0
++    return titles.indices.filter { title.isNotBlank() && titles[it] == title }
++        .minByOrNull { kotlin.math.abs(it.toLong() - index.toLong()) }
++        ?: index.coerceIn(0, titles.lastIndex)
++}
 diff --git a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/FileBook.kt b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/FileBook.kt
 index a656ffd..bced7da 100644
 --- a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/FileBook.kt
@@ -287,81 +405,9 @@ index a72a93c..3ee9aa7 100644
      }
  
  }
-diff --git a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt
-index 5a394ef..deb044b 100644
---- a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt
-+++ b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt
-@@ -134,6 +134,38 @@ class RemoteZipCoreTest {
-         core.ensureMeta()
-     }
- 
-+    @Test(expected = ZipIOException::class)
-+    fun replacedFileRejectsOldLocalHeaderOffset() {
-+        val bytes = zip.copyOf()
-+        val core = coreOf(bytes)
-+        val entry = core.ensureMeta().getValue("chapter1/0001.txt")
-+        bytes[entry.entryOffset] = 0
-+        core.readCompressed(entry)
-+    }
-+
-+    @Test
-+    fun utf8LocalFilenameUsesByteLength() {
-+        val data = "第233章内容".toByteArray()
-+        val bytes = buildZip(listOf(Spec("章节/233.xhtml", data)), Charsets.UTF_8)
-+        val core = coreOf(bytes)
-+        val entry = core.ensureMeta().values.single()
-+        assertArrayEquals(data, decode(core.readCompressed(entry), entry.entry.method))
-+    }
-+
-+    @Test(expected = ZipIOException::class)
-+    fun truncatedCachedDataIsRejected() {
-+        var truncate = false
-+        val source = RangedSource { offset, length, size ->
-+            val result = sourceOf(zip).readRange(offset, length, size)
-+            if (truncate && result.isNotEmpty()) result.copyOf(result.size - 1) else result
-+        }
-+        val core = RemoteZipCore(source, "test.zip", zip.size.toLong())
-+        val entry = core.ensureMeta().getValue("chapter1/0002.jpg")
-+        core.readCompressed(entry)
-+        truncate = true
-+        core.readCompressed(entry)
-+    }
-+
-     @Test(expected = ZipIOException::class)
-     fun garbageBytesThrowNoEocd() {
-         coreOf(ByteArray(500)).ensureMeta()
-diff --git a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt
-index 321571d..275d1e9 100644
---- a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt
-+++ b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt
-@@ -17,9 +17,9 @@ object ZipTestFixtures {
-         val extra: ByteArray? = null,
-     )
- 
--    fun buildZip(specs: List<Spec>): ByteArray {
-+    fun buildZip(specs: List<Spec>, charset: java.nio.charset.Charset = Charsets.ISO_8859_1): ByteArray {
-         val bos = ByteArrayOutputStream()
--        ZipOutputStream(bos, Charsets.ISO_8859_1).use { zos ->
-+        ZipOutputStream(bos, charset).use { zos ->
-             specs.forEach { spec ->
-                 val e = java.util.zip.ZipEntry(spec.name)
-                 if (spec.stored) {
-diff --git a/data/src/commonMain/kotlin/io/legado/app/model/fileBook/EpubChapterPosition.kt b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/EpubChapterPosition.kt
-new file mode 100644
---- /dev/null
-+++ b/data/src/commonMain/kotlin/io/legado/app/model/fileBook/EpubChapterPosition.kt
-@@ -0,0 +1,9 @@
-+package io.legado.app.model.fileBook
-+
-+/** Keep the same chapter when an updated EPUB inserts/removes/reorders earlier entries. */
-+internal fun epubChapterPosition(titles: List<String>, title: String, index: Int): Int {
-+    if (titles.isEmpty()) return 0
-+    return titles.indices.filter { title.isNotBlank() && titles[it] == title }
-+        .minByOrNull { kotlin.math.abs(it.toLong() - index.toLong()) }
-+        ?: index.coerceIn(0, titles.lastIndex)
-+}
 diff --git a/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshot.kt b/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshot.kt
 new file mode 100644
+index 0000000..2051754
 --- /dev/null
 +++ b/data/src/jvmAndAndroidMain/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshot.kt
 @@ -0,0 +1,69 @@
@@ -436,6 +482,7 @@ new file mode 100644
 +}
 diff --git a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/EpubChapterPositionTest.kt b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/EpubChapterPositionTest.kt
 new file mode 100644
+index 0000000..7fab317
 --- /dev/null
 +++ b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/EpubChapterPositionTest.kt
 @@ -0,0 +1,19 @@
@@ -460,6 +507,7 @@ new file mode 100644
 +}
 diff --git a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshotTest.kt b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshotTest.kt
 new file mode 100644
+index 0000000..8edf129
 --- /dev/null
 +++ b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteEpubSnapshotTest.kt
 @@ -0,0 +1,105 @@
@@ -568,3 +616,62 @@ new file mode 100644
 +        snapshot.readRange(0, 4)
 +    }
 +}
+diff --git a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt
+index 5a394ef..deb044b 100644
+--- a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt
++++ b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/RemoteZipCoreTest.kt
+@@ -134,6 +134,38 @@ class RemoteZipCoreTest {
+         core.ensureMeta()
+     }
+ 
++    @Test(expected = ZipIOException::class)
++    fun replacedFileRejectsOldLocalHeaderOffset() {
++        val bytes = zip.copyOf()
++        val core = coreOf(bytes)
++        val entry = core.ensureMeta().getValue("chapter1/0001.txt")
++        bytes[entry.entryOffset] = 0
++        core.readCompressed(entry)
++    }
++
++    @Test
++    fun utf8LocalFilenameUsesByteLength() {
++        val data = "第233章内容".toByteArray()
++        val bytes = buildZip(listOf(Spec("章节/233.xhtml", data)), Charsets.UTF_8)
++        val core = coreOf(bytes)
++        val entry = core.ensureMeta().values.single()
++        assertArrayEquals(data, decode(core.readCompressed(entry), entry.entry.method))
++    }
++
++    @Test(expected = ZipIOException::class)
++    fun truncatedCachedDataIsRejected() {
++        var truncate = false
++        val source = RangedSource { offset, length, size ->
++            val result = sourceOf(zip).readRange(offset, length, size)
++            if (truncate && result.isNotEmpty()) result.copyOf(result.size - 1) else result
++        }
++        val core = RemoteZipCore(source, "test.zip", zip.size.toLong())
++        val entry = core.ensureMeta().getValue("chapter1/0002.jpg")
++        core.readCompressed(entry)
++        truncate = true
++        core.readCompressed(entry)
++    }
++
+     @Test(expected = ZipIOException::class)
+     fun garbageBytesThrowNoEocd() {
+         coreOf(ByteArray(500)).ensureMeta()
+diff --git a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt
+index 321571d..275d1e9 100644
+--- a/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt
++++ b/data/src/jvmAndAndroidTest/kotlin/io/legado/app/model/fileBook/ZipTestFixtures.kt
+@@ -17,9 +17,9 @@ object ZipTestFixtures {
+         val extra: ByteArray? = null,
+     )
+ 
+-    fun buildZip(specs: List<Spec>): ByteArray {
++    fun buildZip(specs: List<Spec>, charset: java.nio.charset.Charset = Charsets.ISO_8859_1): ByteArray {
+         val bos = ByteArrayOutputStream()
+-        ZipOutputStream(bos, Charsets.ISO_8859_1).use { zos ->
++        ZipOutputStream(bos, charset).use { zos ->
+             specs.forEach { spec ->
+                 val e = java.util.zip.ZipEntry(spec.name)
+                 if (spec.stored) {

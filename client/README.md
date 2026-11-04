@@ -26,3 +26,12 @@ APK 和与之对应的完整源码应成对发布在 GitHub Releases，不提交
 发布前运行 `python scripts/package_reader_source.py`，将其输出的完整源码压缩包与 APK 一起上传。
 发布记录应包含基础版本、APK SHA-256、包名、versionCode、测试范围和源码附件。
 任何签名私钥、SDK、构建缓存和个人书籍都不能随附件发布。
+
+## 配套客户端独立更新渠道
+
+配套修复版自 `3.26.110401debug`（versionCode 10002）起，仅检查 [lzl86/novel-tracker Releases](https://github.com/lzl86/novel-tracker/releases)。
+只识别 `reader-epubfix-<三段数字版本>` 标签下的 `legado-epubfix-arm64.apk`，不跟随社区正式版/测试版设置，也不回退到社区源。
+旧 `3.26.100113debug` 仍内置社区更新地址，须手动安装一次本渠道新版；保持同一包名及签名即可覆盖，无需卸载。
+当前渠道沿用原测试签名以保留覆盖能力；签名私钥不提交。未来每次发布须递增 versionCode 和三段版本号，并同时发布对应完整源码。
+检查失败时会报告错误；“未检测到更新”不表示手机网络一定可访问 GitHub。安装 APK 仍需用户确认。
+本次渠道调整不包含同名文件导入覆盖问题的修复。
